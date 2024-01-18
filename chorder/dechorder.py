@@ -33,24 +33,24 @@ def get_key_from_pitch(midi_obj):
 
 
 class Dechorder:
-    major_weights = [10, -2, -1, -2, 10, -5, -2, 10, -2, -1, -2, 0]
-    minor_weights = [10, -2, -1, 10, -2, -5, -2, 10, -1, -2, 0, -2]
-    diminished_weights = [10, -2, -1, 10, -2, -1, 10, -2, -2, 1, -1, -2]
-    augmented_weights = [10, -2, -1, -2, 10, -1, -2, -2, 10, -1, -2, 0]
-    sus_2_weights = [10, -2, 5, -2, -1, -5, -2, 5, -2, -1, -2, 0]
-    sus_4_weights = [10, -2, -1, -2, -5, 5, -2, 5, -2, -1, -2, 0]
+    major_weights =      [10, -2, -1, -2, 10, -5, -2, 10, -2, -1, -2,  0]
+    minor_weights =      [10, -2, -1, 10, -2, -5, -2, 10, -1, -2,  0, -2]
+    diminished_weights = [10, -2, -1, 10, -2, -1, 10, -2, -2,  1, -1, -2]
+    augmented_weights =  [10, -2, -1, -2, 10, -1, -2, -2, 10, -1, -2,  0]
+    sus_2_weights =      [10, -2,  5, -2, -1, -5, -2,  5, -2, -1, -2,  0]
+    sus_4_weights =      [10, -2, -1, -2, -5,  5, -2,  5, -2, -1, -2,  0]
 
-    major_map = [0, 4, 7]
-    minor_map = [0, 3, 7]
-    diminished_map = [0, 3, 6]
-    augmented_map = [0, 4, 8]
-    dominant_map = [0, 4, 7, 10]
-    major_seventh_map = [0, 4, 7, 11]
-    minor_seventh_map = [0, 3, 7, 10]
-    diminished_seventh_map = [0, 3, 6, 9]
+    major_map =                   [0, 4, 7]
+    minor_map =                   [0, 3, 7]
+    diminished_map =              [0, 3, 6]
+    augmented_map =               [0, 4, 8]
+    dominant_map =                [0, 4, 7, 10]
+    major_seventh_map =           [0, 4, 7, 11]
+    minor_seventh_map =           [0, 3, 7, 10]
+    diminished_seventh_map =      [0, 3, 6, 9]
     half_diminished_seventh_map = [0, 3, 6, 10]
-    sus_2_map = [0, 2, 7]
-    sus_4_map = [0, 5, 7]
+    sus_2_map =                   [0, 2, 7]
+    sus_4_map =                   [0, 5, 7]
 
     chord_weights = {
         'M': major_weights,
@@ -77,6 +77,7 @@ class Dechorder:
 
     @staticmethod
     def get_chord_map(notes, start=0, end=1e7):
+        # Maps note to cumulative duration
         chord_map = [0] * 12
         for note in notes:
             chord_map[note.pitch % 12] += min(end, note.end) - max(start, note.start)
@@ -85,6 +86,7 @@ class Dechorder:
 
     @staticmethod
     def get_pitch_distribution(notes, start=0, end=1e7):
+        # Maps pitch to cumulative duration
         distribution = {}
         for note in notes:
             if note.pitch not in distribution.keys():
@@ -95,6 +97,8 @@ class Dechorder:
 
     @staticmethod
     def get_bass_pc(notes, start=0, end=1e7):
+        # Return the first low note that has a duration of longer than 1/8 of (start, end)
+        # TODO: For 2-bar wise calculations, this threshold is thus twice as long
         distribution = Dechorder.get_pitch_distribution(notes, start, end)
         distribution = list(sorted(distribution.items()))
         for pitch, span in distribution:
@@ -108,10 +112,14 @@ class Dechorder:
         max_score = 0
         max_root = -1
         max_quality = None
+        # 1. Get map from note to cumulative duration
         chord_map = Dechorder.get_chord_map(notes, start, end)
+        # 2. Get bass pitch class based on duration
         bass_pc = Dechorder.get_bass_pc(notes, start, end)
 
+        # 3. Loop through all possible roots and qualities
         for i in range(12):
+            # If root is not present, skip it
             temp_map = chord_map[i:] + chord_map[:i]
             if temp_map[0] == 0:
                 continue
@@ -119,6 +127,9 @@ class Dechorder:
             for quality, weights in Dechorder.chord_weights.items():
                 score = sum([map_item * weight for map_item, weight in zip(temp_map, weights)])
 
+                # TODO: does this make sense? if the pitch identified as bass is weighted < 0, then divide the score by 2
+                # this only works if the bass pitch is identified correctly, meaning the bass pitch is the lowest pitch in 
+                # the MIDI lasting 1/8 the interval
                 if consider_bass and bass_pc is not None:
                     if weights[bass_pc] < 0:
                         score /= 2
@@ -128,9 +139,11 @@ class Dechorder:
                     max_root = i
                     max_quality = quality
 
+        # TODO: does this make sense? what about very sparse MIDI files? add option to relax this requirement
         if max_score < (end - start) * 10:
             return Chord(), -1
 
+        # TODO: do these inversion rules make sense? 
         if bass_pc is not None:
             if max_quality == 'o':
                 if (max_root - bass_pc + 12) % 12 == 4:
@@ -169,47 +182,142 @@ class Dechorder:
         return Chord(args=(max_root, max_quality, bass_pc)), max_score
 
     @staticmethod
-    def get_chords(midi_obj, beat=2):
+    def get_chords(midi_obj, start=None, end=None, beat=2):
         interval = midi_obj.ticks_per_beat * beat
-        return [Dechorder.get_chord_quality(notes, i * interval, (i + 1) * interval) for i, notes in
-                enumerate(get_notes_by_beat(midi_obj, beat))]
+
+        # for debugging
+        # for i, notes in enumerate(get_notes_by_beat(midi_obj, beat, start, end)):
+        #     chd = Dechorder.get_chord_quality(notes, start + i * interval, start + (i + 1) * interval)
+
+        return [Dechorder.get_chord_quality(notes, start + i * interval, start + (i + 1) * interval) for i, notes in
+                enumerate(get_notes_by_beat(midi_obj, beat, start, end))]
 
     @staticmethod
     def dechord(midi_obj, scale=None):
         if scale is None:
             scale = Chord.default_scale
 
-        chords_1 = Dechorder.get_chords(midi_obj, beat=1)
-        chords_2 = Dechorder.get_chords(midi_obj, beat=2)
-        for i in range(len(chords_2)):
-            chord = chords_2[i]
-            chords_2[i] = chord[0], chord[1] / 2
 
+        # TODO: parse depending on time signature 
+        
+        # if numerator divisible by 2, 2-bar parsing vs 1-bar parsing
+        # if numerator divisible by 3, 3-bar parsing vs 1-bar parsing
+        # otherwise, for numerator n, n-bar vs 1-bar parsing
+            
         chords = []
 
-        for i in range(len(chords_2)):
-            prev_index = i * 2
-            next_index = i * 2 + 1
-            two_chord = chords_2[i]
-            two_score = two_chord[1]
-            prev_chord = chords_1[prev_index]
-            prev_score = prev_chord[1]
+        # TODO: default for ts not divisible by 2 or 3
 
-            if next_index < len(chords_1):
-                next_chord = chords_1[next_index]
-                next_score = next_chord[1]
+        if len(midi_obj.time_signature_changes) == 0:
+        # if True: # TODO
+            ts_changes = [containers.TimeSignature(numerator=4, denominator=4, time=0)]
+        else:
+            ts_changes = midi_obj.time_signature_changes
+            
+        for ts_i, ts_change in enumerate(ts_changes):
 
-                # print(f'{prev_score} {next_score} {two_score}')
-
-                if prev_score >= two_score and next_score >= two_score:
-                    chords += [prev_chord[0], next_chord[0]]
-                else:
-                    chords += [two_chord[0]] * 2
+            if ts_i + 1 < len(ts_changes):
+                next_ts_change = ts_changes[ts_i + 1]
+                next_ts_time = next_ts_change.time
             else:
-                if prev_score > two_score:
-                    chords.append(prev_chord[0])
-                else:
-                    chords.append(two_chord[0])
+                next_ts_time = midi_obj.max_tick
+
+            ts_num = ts_change.numerator
+            ts_den = ts_change.denominator
+            ts_time = ts_change.time
+
+            # TODO: ts depednent parsing
+            # if ts_num % 2 == 0:
+            if True: # TODO
+
+                # Compute chords every 1 beat
+                chords_1 = Dechorder.get_chords(midi_obj, beat=1, start=ts_time, end=next_ts_time)
+                # Compute chords every 2 beats
+                chords_2 = Dechorder.get_chords(midi_obj, beat=2, start=ts_time, end=next_ts_time)
+
+                # Downweight 2-beat wise scores (divide by 2)
+                for i in range(len(chords_2)):
+                    chord = chords_2[i]
+                    chords_2[i] = chord[0], chord[1] / 2
+
+                # Iterate through every 2 bars
+                for i in range(len(chords_2)):
+                    prev_index = i * 2
+                    next_index = i * 2 + 1
+                    # Get the 2-bar wise assignment and score for this beat and the previous one
+                    two_chord = chords_2[i]
+                    two_score = two_chord[1]
+                    # Get the 1-bar wise assignment and score for the previous beat
+                    prev_chord = chords_1[prev_index]
+                    prev_score = prev_chord[1]
+
+                    # If there is a next bar, choose the 1-beat wise assignment if BOTH 1-beats wise assignments are better,
+                    # otherwise choose the 2-beat wise assignment
+                    if next_index < len(chords_1):
+                        next_chord = chords_1[next_index]
+                        next_score = next_chord[1]
+
+                        # print(f'{prev_score} {next_score} {two_score}')
+                        if prev_score >= two_score and next_score >= two_score:
+                            chords += [prev_chord[0], next_chord[0]]
+                        else:
+                            chords += [two_chord[0]] * 2
+                    
+                    # If there is not a next bar, choose the 1-bar wise assignment if it is better, otherwise choose the
+                    # 2-bar wise assignment
+                    else:
+                        if prev_score > two_score:
+                            chords.append(prev_chord[0])
+                        else:
+                            chords.append(two_chord[0])
+
+            elif ts_num % 3 == 0:
+
+                chords_1 = Dechorder.get_chords(midi_obj, beat=1, start=ts_time, end=next_ts_time)
+                chords_3 = Dechorder.get_chords(midi_obj, beat=3, start=ts_time, end=next_ts_time)
+
+                for i in range(len(chords_3)):
+                    chord = chords_3[i]
+                    chords_3[i] = chord[0], chord[1] / 3
+                
+                # Iterate through every 3 bars
+                for i in range(len(chords_3)):
+                    index_1 = i * 2
+                    index_2 = i * 2 + 1
+                    index_3 = i * 2 + 2
+                    # Get the 3-bar wise assignment and score for this beat and previous 2
+                    three_chord = chords_3[i]
+                    three_score = three_chord[1]
+                    # Get the two 1-bar wise assignments and score for the previous two beat
+                    one_chord = chords_1[index_1]
+                    one_score = one_chord[1]
+
+                    if index_3 < len(chords_1):
+                        two_chord = chords_1[index_2]
+                        two_score = two_chord[1]
+
+                        next_chord = chords_1[index_3]
+                        next_score = next_chord[1]
+
+                        if one_score >= three_score and two_score >= three_score and next_score >= three_score:
+                            chords += [one_chord[0], two_chord[0], next_chord[0]]
+                        else:
+                            chords += [three_chord[0]] * 3
+
+                    elif index_2 < len(chords_1):
+                        next_chord = chords_1[index_2]
+                        next_score = next_chord[1]
+                        
+                        if one_score >= three_score and next_score >= three_score:
+                            chords += [one_chord[0], next_chord[0]]
+                        else:
+                            chords += [three_chord[0]] * 2
+
+                    else:
+                        if one_score > three_score:
+                            chords.append(one_chord[0])
+                        else:
+                            chords.append(three_chord[0])
 
         return chords
 
@@ -249,7 +357,9 @@ def play_chords(midi_obj):
     default_velocity = 63
     midi_maps = [chord_to_midi(Chord(marker.text)) for marker in midi_obj.markers]
     new_midi_obj = parser.MidiFile()
-    new_midi_obj.time_signature_changes.append(containers.TimeSignature(numerator=4, denominator=4, time=0))
+    new_midi_obj.ticks_per_beat = midi_obj.ticks_per_beat
+    # new_midi_obj.time_signature_changes.append(containers.TimeSignature(numerator=4, denominator=4, time=0))
+    new_midi_obj.time_signature_changes.extend(midi_obj.time_signature_changes)
     new_midi_obj.instruments.append(containers.Instrument(program=0, is_drum=False, name='Piano'))
 
     for midi_map, prev_marker, next_marker in zip(midi_maps, midi_obj.markers[:-1], midi_obj.markers[1:]):

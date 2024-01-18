@@ -4,6 +4,8 @@ from _collections import OrderedDict
 def get_timepoints(midi_obj):
     timepoints = {}
     for instrument in midi_obj.instruments:
+        if instrument.is_drum:
+            continue
         for note in instrument.notes:
             start = note.start
             end = note.end
@@ -54,12 +56,17 @@ def get_notes_at(timepoints, start=0, end=1e7):
     return notes
 
 
-def get_notes_by_beat(midi_obj, beat=1):
+def get_notes_by_beat(midi_obj, beat=1, start=None, end=None):
     tick_interval = midi_obj.ticks_per_beat * beat
     timepoints = get_timepoints(midi_obj)
     notes = []
 
-    for tick_time in range(0, midi_obj.max_tick, tick_interval):
+    if start is None:
+        start = 0
+    if end is None:
+        end = midi_obj.max_tick
+
+    for tick_time in range(start, end, tick_interval):
         notes.append(get_notes_at(timepoints, tick_time, tick_time + tick_interval))
 
     return notes
