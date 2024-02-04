@@ -197,6 +197,8 @@ class Dechorder:
         if scale is None:
             scale = Chord.default_scale
 
+        max_note_tick = max([max([n.end for n in i.notes]) for i in midi_obj.instruments]) + 1
+
 
         # TODO: parse depending on time signature 
         
@@ -220,7 +222,7 @@ class Dechorder:
                 next_ts_change = ts_changes[ts_i + 1]
                 next_ts_time = next_ts_change.time
             else:
-                next_ts_time = midi_obj.max_tick
+                next_ts_time = max_note_tick
 
             ts_num = ts_change.numerator
             ts_den = ts_change.denominator
